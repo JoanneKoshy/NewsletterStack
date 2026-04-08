@@ -7,20 +7,26 @@ router = APIRouter()
 
 class GenerateRequest(BaseModel):
     extracted_data: dict
+    media_links: list = []
     tone: str = "formal"
 
 
 class RegenerateRequest(BaseModel):
     extracted_data: dict
+    media_links: list = []
     feedback: str
     tone: str = "formal"
+
+
+class EditRequest(BaseModel):
+    markdown: str
 
 
 @router.post("/generate-newsletter")
 async def create_newsletter(req: GenerateRequest):
     try:
-        html = generate_newsletter(req.extracted_data, req.tone)
-        return {"html": html}
+        markdown = generate_newsletter(req.extracted_data, req.media_links, req.tone)
+        return {"markdown": markdown}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -28,9 +34,14 @@ async def create_newsletter(req: GenerateRequest):
 @router.post("/regenerate-newsletter")
 async def regenerate_newsletter(req: RegenerateRequest):
     try:
-        # Add Robin's feedback so Claude knows what to change
         req.extracted_data["_user_feedback"] = req.feedback
-        html = generate_newsletter(req.extracted_data, req.tone)
-        return {"html": html}
+        markdown = generate_newsletter(req.extracted_data, req.media_links, req.tone)
+        return {"markdown": markdown}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/save-edit")
+async def save_edit(req: EditRequest):
+    """Robin edits the markdown directly — this just acknowledges the save."""
+    return {"markdown": req.markdown, "status": "saved"}

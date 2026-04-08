@@ -1,35 +1,34 @@
 import json
-import base64
-import anthropic
+from groq import Groq
 from app.config import settings
 
-client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+client = Groq(api_key=settings.groq_api_key)
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "llama-3.3-70b-versatile"
 
 
 def extract_from_reports(file_contents: list[dict]) -> dict:
-    """
-    Takes a list of {"filename": "...", "text": "..."} dicts.
-    Returns structured data extracted by Claude.
-    """
     combined_text = ""
     for f in file_contents:
         combined_text += f"\n\n--- START OF: {f['filename']} ---\n"
         combined_text += f["text"]
         combined_text += f"\n--- END OF: {f['filename']} ---\n"
 
-    message = client.messages.create(
+    response = client.chat.completions.create(
         model=MODEL,
+        temperature=0.1,
         max_tokens=4096,
-        system="""You are a data extraction assistant for an investor newsletter.
+        messages=[
+            {
+                "role": "system",
+                "content": """You are a data extraction assistant for an investor newsletter.
 Extract key information from the uploaded reports and return ONLY valid JSON
 with no markdown formatting, no backticks, no preamble.
 
 Return this exact structure:
 {
     "company_name": "the company name if found",
-    "period": "the reporting period (e.g. 'Week ending March 28, 2026')",
+    "period": "the reporting period",
     "financial_highlights": {
         "revenue": "amount or null",
         "expenses": "amount or null",
@@ -47,14 +46,12 @@ Return this exact structure:
 }
 
 If a field has no data, use null or an empty list. Do not fabricate data.""",
-        messages=[
-            {"role": "user", "content": combined_text}
+            },
+            {"role": "user", "content": combined_text},
         ],
     )
 
-    response_text = message.content[0].text.strip()
-
-    # Clean up if Claude wraps response in code fences
+    response_text = response.choices[0].message.content.strip()
     if response_text.startswith("```"):
         response_text = response_text.split("\n", 1)[1]
     if response_text.endswith("```"):
@@ -63,98 +60,55 @@ If a field has no data, use null or an empty list. Do not fabricate data.""",
     return json.loads(response_text.strip())
 
 
-def extract_from_pdf_native(file_path: str, filename: str) -> dict:
+def generate_newsletter(extracted_data: dict, media_links: list = None, tone: str = "formal") -> str:
     """
-    Uses Claude's native PDF support — sends the actual PDF
-    as base64 instead of extracted text. Much better for
-    reading tables, charts, and complex layouts.
+    Generates the newsletter as clean Markdown (not HTML).
+    Includes media links and images if provided.
     """
-    with open(file_path, "rb") as f:
-        pdf_data = base64.b64encode(f.read()).decode("utf-8")
+    media_section = ""
+    if media_links:
+        media_section = "\n\nMedia content to include in the newsletter:\n"
+        for m in media_links:
+            if m.get("type") == "image":
+                media_section += f"- Image: ![{m.get('caption', '')}]({m.get('url', '')})\n"
+            else:
+                media_section += f"- {m.get('type', 'link').title()}: {m.get('url', '')} ({m.get('title', 'Untitled')})\n"
 
-    message = client.messages.create(
+    response = client.chat.completions.create(
         model=MODEL,
-        max_tokens=4096,
-        system="""You are a data extraction assistant. Extract all key business
-information from this document. Return ONLY valid JSON with no markdown.
-
-Return this structure:
-{
-    "filename": "the filename",
-    "financials": {
-        "revenue": "amount or null",
-        "expenses": "amount or null",
-        "payables": "amount or null",
-        "receivables": "amount or null"
-    },
-    "key_points": ["list of important points"],
-    "metrics": [{"label": "...", "value": "..."}],
-    "summary": "2-3 sentence summary"
-}""",
+        temperature=0.3,
+        max_tokens=8192,
         messages=[
             {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": pdf_data,
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": f"Extract all key business data from this report: {filename}",
-                    },
-                ],
-            }
-        ],
-    )
+                "role": "system",
+                "content": f"""You are a professional investor relations writer. Tone: {tone} and corporate.
 
-    response_text = message.content[0].text.strip()
-    if response_text.startswith("```"):
-        response_text = response_text.split("\n", 1)[1]
-    if response_text.endswith("```"):
-        response_text = response_text.rsplit("```", 1)[0]
-
-    return json.loads(response_text.strip())
-
-
-def generate_newsletter(extracted_data: dict, tone: str = "formal") -> str:
-    """
-    Takes the extracted data and generates a polished HTML newsletter.
-    Returns raw HTML string.
-    """
-    message = client.messages.create(
-        model=MODEL,
-        max_tokens=8192,
-        system=f"""You are a professional investor relations writer. Your tone is
-{tone} and corporate. Generate a polished investor newsletter in HTML format.
+Generate a polished investor newsletter in MARKDOWN format.
 
 Rules:
-- Use clean, inline-styled HTML suitable for email clients
-- Professional color scheme: dark navy (#1a1a2e) headers, white body, subtle borders
+- Use clean Markdown that works on Substack
+- Structure: Title (H1), Executive Summary, Financial Highlights, Key Wins,
+  Progress Updates, Team Updates, Challenges, Outlook/Next Steps
 - Include sections ONLY if data exists for them
-- Use tables for financial data with proper formatting
-- Keep it concise but comprehensive
-- No images or external resources — everything inline
-- All CSS must be inline styles (no <style> blocks), because email clients strip them
-- Structure: Company header with period, Executive Summary, Financial Highlights,
-  Key Wins & Milestones, Progress Updates, Team Updates, Challenges, Outlook
-- Return ONLY the HTML. No markdown fences. No explanation.""",
-        messages=[
+- For financial data, use Markdown tables
+- If media links are provided (YouTube, social posts), embed them naturally
+  in relevant sections. For YouTube links, put the bare URL on its own line
+  so Substack auto-embeds it
+- For images, use standard Markdown image syntax
+- Keep it concise, professional, and investor-friendly
+- Return ONLY the Markdown. No code fences around the whole thing. No explanation.""",
+            },
             {
                 "role": "user",
-                "content": f"Generate the investor newsletter from this extracted data:\n\n{json.dumps(extracted_data, indent=2)}",
-            }
+                "content": f"Generate the investor newsletter from this data:\n\n{json.dumps(extracted_data, indent=2)}{media_section}",
+            },
         ],
     )
 
-    html = message.content[0].text.strip()
-    if html.startswith("```"):
-        html = html.split("\n", 1)[1]
-    if html.endswith("```"):
-        html = html.rsplit("```", 1)[0]
+    md = response.choices[0].message.content.strip()
+    if md.startswith("```"):
+        md = md.split("\n", 1)[1]
+    if md.endswith("```"):
+        md = md.rsplit("```", 1)[0]
 
-    return html.strip()
+    return md.strip()

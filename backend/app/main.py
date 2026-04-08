@@ -1,10 +1,12 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import upload, extract, newsletter, email_sender, pdf_export, investors
+from app.routers import upload, extract, newsletter, media, markdown_export, pdf_export
+from app.config import settings
+import os
 
 app = FastAPI(title="Investor Newsletter Tool")
 
-# Allow React frontend to talk to this backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -13,13 +15,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register all route files
+# Serve uploaded images so frontend can display them
+os.makedirs(settings.upload_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
+
 app.include_router(upload.router, prefix="/api", tags=["upload"])
+app.include_router(media.router, prefix="/api", tags=["media"])
 app.include_router(extract.router, prefix="/api", tags=["extract"])
 app.include_router(newsletter.router, prefix="/api", tags=["newsletter"])
-app.include_router(email_sender.router, prefix="/api", tags=["email"])
+app.include_router(markdown_export.router, prefix="/api", tags=["markdown"])
 app.include_router(pdf_export.router, prefix="/api", tags=["pdf"])
-app.include_router(investors.router, prefix="/api", tags=["investors"])
 
 
 @app.get("/api/health")
