@@ -4,51 +4,29 @@ from app.config import settings
 
 client = Groq(api_key=settings.groq_api_key)
 
-# gemma2-9b-it has 15,000 TPM on free tier — best balance
-EXTRACT_MODEL = "gemma2-9b-it"
-GENERATE_MODEL = "gemma2-9b-it"
+MODEL = "llama-3.1-8b-instant"
 
 
 def extract_from_reports(file_contents: list[dict]) -> dict:
     combined_text = ""
     for f in file_contents:
-        combined_text += f"\n\n--- START OF: {f['filename']} ---\n"
+        combined_text += f"\n--- {f['filename']} ---\n"
         combined_text += f["text"]
-        combined_text += f"\n--- END OF: {f['filename']} ---\n"
 
-    # Truncate to stay under token limits
     words = combined_text.split()
-    if len(words) > 4000:
-        combined_text = " ".join(words[:4000])
-        combined_text += "\n\n[Document truncated due to length]"
+    if len(words) > 2000:
+        combined_text = " ".join(words[:2000])
 
     response = client.chat.completions.create(
-        model=EXTRACT_MODEL,
+        model=MODEL,
         temperature=0.1,
-        max_tokens=2048,
+        max_tokens=1500,
         messages=[
             {
                 "role": "system",
-                "content": """Extract key business info from the reports. Return ONLY valid JSON, no markdown, no backticks.
-
-{
-    "company_name": "name or null",
-    "period": "reporting period or null",
-    "financial_highlights": {
-        "revenue": "amount or null",
-        "expenses": "amount or null",
-        "net_profit": "amount or null",
-        "payables": "amount or null",
-        "receivables": "amount or null",
-        "other_metrics": [{"label": "...", "value": "..."}]
-    },
-    "key_wins": ["achievements"],
-    "progress_updates": ["progress items"],
-    "new_hires": ["new team members"],
-    "challenges": ["challenges"],
-    "upcoming": ["next steps"],
-    "raw_summary": "2-3 sentence summary"
-}""",
+                "content": """Extract business info from reports. Return ONLY valid JSON:
+{"company_name":"...","period":"...","financial_highlights":{"revenue":"...","expenses":"...","net_profit":"...","payables":"...","receivables":"...","other_metrics":[{"label":"...","value":"..."}]},"key_wins":["..."],"progress_updates":["..."],"new_hires":["..."],"challenges":["..."],"upcoming":["..."],"raw_summary":"..."}
+Use null or [] if no data. No markdown. No backticks.""",
             },
             {"role": "user", "content": combined_text},
         ],
@@ -64,38 +42,36 @@ def extract_from_reports(file_contents: list[dict]) -> dict:
 
 
 def generate_newsletter(extracted_data: dict, media_links: list = None, tone: str = "formal") -> str:
-    # Keep the data compact to stay under token limits
     compact_data = json.dumps(extracted_data, separators=(",", ":"))
 
-    media_section = ""
-    if media_links:
-        media_section = "\n\nMedia to embed:\n"
-        for m in media_links:
+    if len(compact_data) > 6000:
+        compact_data = compact_data[:6000]
+
+    # Build explicit media instructions
+    media_instruction = ""
+    if media_links and len(media_links) > 0:
+        media_instruction = "\n\nIMPORTANT — Include these media items in the newsletter. Copy them EXACTLY as written:\n"
+        for i, m in enumerate(media_links):
             if m.get("type") == "image":
-                media_section += f"- Image: ![{m.get('title', '')}]({m.get('url', '')})\n"
+                media_instruction += f"\nImage {i+1} — put this in the newsletter:\n![{m.get('title','')}]({m.get('url','')})\n"
+            elif m.get("type") == "youtube":
+                media_instruction += f"\nYouTube video {i+1} — put this URL on its own line in the newsletter:\n{m.get('url','')}\n"
             else:
-                media_section += f"- {m.get('type', 'link')}: {m.get('url', '')} - {m.get('title', '')}\n"
+                media_instruction += f"\nLink {i+1} — embed in newsletter:\n[{m.get('title','Link')}]({m.get('url','')})\n"
 
     response = client.chat.completions.create(
-        model=GENERATE_MODEL,
+        model=MODEL,
         temperature=0.3,
-        max_tokens=3000,
+        max_tokens=2000,
         messages=[
             {
                 "role": "system",
-                "content": f"""You are an investor relations writer. Tone: {tone}, corporate.
-Write a Markdown newsletter. Rules:
-- Use # for title, ## for sections, tables for financials
-- Only include sections with data
-- For YouTube links, put bare URL on its own line
-- For images, use ![caption](url)
-- Sections: Title, Executive Summary, Financial Highlights, Key Wins, Progress, Team, Challenges, Outlook
-- Return ONLY Markdown, no code fences, no explanation""",
+                "content": f"""Write a {tone} investor newsletter in Markdown.
+Use # title, ## sections, tables for financials.
+Only include sections with data.
+Return ONLY Markdown. No code fences.""",
             },
-            {
-                "role": "user",
-                "content": f"Data:\n{compact_data}{media_section}",
-            },
+            {"role": "user", "content": f"{compact_data}{media_instruction}"},
         ],
     )
 
@@ -104,5 +80,17 @@ Write a Markdown newsletter. Rules:
         md = md.split("\n", 1)[1]
     if md.endswith("```"):
         md = md.rsplit("```", 1)[0]
+
+    # If the model forgot to include media, append them at the end
+    if media_links:
+        for m in media_links:
+            url = m.get("url", "")
+            if url and url not in md:
+                if m.get("type") == "image":
+                    md += f"\n\n![{m.get('title', '')}]({url})"
+                elif m.get("type") == "youtube":
+                    md += f"\n\n{url}"
+                else:
+                    md += f"\n\n[{m.get('title', 'Link')}]({url})"
 
     return md.strip()

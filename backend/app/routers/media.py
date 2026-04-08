@@ -11,17 +11,15 @@ router = APIRouter()
 class MediaLink(BaseModel):
     url: str
     title: str = ""
-    type: str = "youtube"  # youtube, twitter, instagram, linkedin, other
+    type: str = "youtube"
 
 
 @router.post("/media/link")
 async def add_media_link(link: MediaLink):
-    """Store a social media link to include in the newsletter."""
     return {
         "url": link.url,
         "title": link.title,
         "type": link.type,
-        "embed_markdown": generate_embed_markdown(link.url, link.title, link.type),
     }
 
 
@@ -38,28 +36,11 @@ async def upload_image(file: UploadFile = File(...), caption: str = Form("")):
         content = await file.read()
         f.write(content)
 
+    full_url = f"http://localhost:8000/uploads/{unique_name}"
+
     return {
         "filename": file.filename,
         "stored_name": unique_name,
-        "url": f"http://localhost:8000/uploads/{unique_name}",
+        "url": full_url,
         "caption": caption,
-        "markdown": f"![{caption or file.filename}](http://localhost:8000/uploads/{unique_name})",
     }
-
-def generate_embed_markdown(url: str, title: str, link_type: str) -> str:
-    """Generate Substack-friendly markdown for a media link."""
-    if link_type == "youtube":
-        # Extract video ID
-        video_id = ""
-        if "youtu.be/" in url:
-            video_id = url.split("youtu.be/")[1].split("?")[0]
-        elif "v=" in url:
-            video_id = url.split("v=")[1].split("&")[0]
-
-        if video_id:
-            # Substack auto-embeds YouTube links on their own line
-            return f"\n{url}\n"
-
-    # For all other links, just format as a titled link
-    display_title = title or url
-    return f"[{display_title}]({url})"
