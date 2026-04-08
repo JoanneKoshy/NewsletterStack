@@ -71,7 +71,18 @@ export default function NewsletterEditor({
         <div>
           <div className="pane-label">Live Preview</div>
           <div className="preview-pane">
-            <ReactMarkdown>{markdown}</ReactMarkdown>
+            <ReactMarkdown
+  components={{
+    img: ({ src, alt }) => (
+      <img
+        src={src}
+        alt={alt || ""}
+        style={{ maxWidth: "100%", borderRadius: 8 }}
+        onError={(e) => { e.target.style.display = "none"; }}
+      />
+    ),
+  }}
+>{markdown}</ReactMarkdown>
           </div>
         </div>
       </div>
