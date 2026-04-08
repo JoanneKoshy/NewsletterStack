@@ -52,13 +52,16 @@ export default function App() {
         )}
 
         {step === "media" && (
-          <MediaInput
-            mediaLinks={mediaLinks}
-            setMediaLinks={setMediaLinks}
-            onComplete={() => setStep("edit")}
-            onBack={() => setStep("extract")}
-          />
-        )}
+  <MediaInput
+    mediaLinks={mediaLinks}
+    setMediaLinks={setMediaLinks}
+    onComplete={() => {
+      setMarkdown("");
+      setStep("edit");
+    }}
+    onBack={() => setStep("extract")}
+  />
+)}
 
         {step === "edit" && (
           <NewsletterEditor
