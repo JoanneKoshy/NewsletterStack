@@ -27,7 +27,6 @@ async def add_media_link(link: MediaLink):
 
 @router.post("/media/image")
 async def upload_image(file: UploadFile = File(...), caption: str = Form("")):
-    """Upload an image/infographic to include in the newsletter."""
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
         return JSONResponse(status_code=400, content={"error": "Only image files allowed"})
@@ -42,11 +41,10 @@ async def upload_image(file: UploadFile = File(...), caption: str = Form("")):
     return {
         "filename": file.filename,
         "stored_name": unique_name,
-        "url": f"/uploads/{unique_name}",
+        "url": f"http://localhost:8000/uploads/{unique_name}",
         "caption": caption,
-        "markdown": f"![{caption or file.filename}](/uploads/{unique_name})",
+        "markdown": f"![{caption or file.filename}](http://localhost:8000/uploads/{unique_name})",
     }
-
 
 def generate_embed_markdown(url: str, title: str, link_type: str) -> str:
     """Generate Substack-friendly markdown for a media link."""

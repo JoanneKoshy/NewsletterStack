@@ -4,7 +4,9 @@ from app.config import settings
 
 client = Groq(api_key=settings.groq_api_key)
 
-MODEL = "llama-3.3-70b-versatile"
+# gemma2-9b-it has 15,000 TPM on free tier — best balance
+EXTRACT_MODEL = "gemma2-9b-it"
+GENERATE_MODEL = "gemma2-9b-it"
 
 
 def extract_from_reports(file_contents: list[dict]) -> dict:
@@ -14,21 +16,24 @@ def extract_from_reports(file_contents: list[dict]) -> dict:
         combined_text += f["text"]
         combined_text += f"\n--- END OF: {f['filename']} ---\n"
 
+    # Truncate to stay under token limits
+    words = combined_text.split()
+    if len(words) > 4000:
+        combined_text = " ".join(words[:4000])
+        combined_text += "\n\n[Document truncated due to length]"
+
     response = client.chat.completions.create(
-        model=MODEL,
+        model=EXTRACT_MODEL,
         temperature=0.1,
-        max_tokens=4096,
+        max_tokens=2048,
         messages=[
             {
                 "role": "system",
-                "content": """You are a data extraction assistant for an investor newsletter.
-Extract key information from the uploaded reports and return ONLY valid JSON
-with no markdown formatting, no backticks, no preamble.
+                "content": """Extract key business info from the reports. Return ONLY valid JSON, no markdown, no backticks.
 
-Return this exact structure:
 {
-    "company_name": "the company name if found",
-    "period": "the reporting period",
+    "company_name": "name or null",
+    "period": "reporting period or null",
     "financial_highlights": {
         "revenue": "amount or null",
         "expenses": "amount or null",
@@ -37,15 +42,13 @@ Return this exact structure:
         "receivables": "amount or null",
         "other_metrics": [{"label": "...", "value": "..."}]
     },
-    "key_wins": ["list of achievements, milestones, deals closed"],
-    "progress_updates": ["list of project/product progress items"],
-    "new_hires": ["list of new team members with roles if mentioned"],
-    "challenges": ["list of challenges or risks mentioned"],
-    "upcoming": ["list of upcoming plans, goals, next steps"],
-    "raw_summary": "A 2-3 sentence executive summary of all reports combined"
-}
-
-If a field has no data, use null or an empty list. Do not fabricate data.""",
+    "key_wins": ["achievements"],
+    "progress_updates": ["progress items"],
+    "new_hires": ["new team members"],
+    "challenges": ["challenges"],
+    "upcoming": ["next steps"],
+    "raw_summary": "2-3 sentence summary"
+}""",
             },
             {"role": "user", "content": combined_text},
         ],
@@ -61,46 +64,37 @@ If a field has no data, use null or an empty list. Do not fabricate data.""",
 
 
 def generate_newsletter(extracted_data: dict, media_links: list = None, tone: str = "formal") -> str:
-    """
-    Generates the newsletter as clean Markdown (not HTML).
-    Includes media links and images if provided.
-    """
+    # Keep the data compact to stay under token limits
+    compact_data = json.dumps(extracted_data, separators=(",", ":"))
+
     media_section = ""
     if media_links:
-        media_section = "\n\nMedia content to include in the newsletter:\n"
+        media_section = "\n\nMedia to embed:\n"
         for m in media_links:
             if m.get("type") == "image":
-                media_section += f"- Image: ![{m.get('caption', '')}]({m.get('url', '')})\n"
+                media_section += f"- Image: ![{m.get('title', '')}]({m.get('url', '')})\n"
             else:
-                media_section += f"- {m.get('type', 'link').title()}: {m.get('url', '')} ({m.get('title', 'Untitled')})\n"
+                media_section += f"- {m.get('type', 'link')}: {m.get('url', '')} - {m.get('title', '')}\n"
 
     response = client.chat.completions.create(
-        model=MODEL,
+        model=GENERATE_MODEL,
         temperature=0.3,
-        max_tokens=8192,
+        max_tokens=3000,
         messages=[
             {
                 "role": "system",
-                "content": f"""You are a professional investor relations writer. Tone: {tone} and corporate.
-
-Generate a polished investor newsletter in MARKDOWN format.
-
-Rules:
-- Use clean Markdown that works on Substack
-- Structure: Title (H1), Executive Summary, Financial Highlights, Key Wins,
-  Progress Updates, Team Updates, Challenges, Outlook/Next Steps
-- Include sections ONLY if data exists for them
-- For financial data, use Markdown tables
-- If media links are provided (YouTube, social posts), embed them naturally
-  in relevant sections. For YouTube links, put the bare URL on its own line
-  so Substack auto-embeds it
-- For images, use standard Markdown image syntax
-- Keep it concise, professional, and investor-friendly
-- Return ONLY the Markdown. No code fences around the whole thing. No explanation.""",
+                "content": f"""You are an investor relations writer. Tone: {tone}, corporate.
+Write a Markdown newsletter. Rules:
+- Use # for title, ## for sections, tables for financials
+- Only include sections with data
+- For YouTube links, put bare URL on its own line
+- For images, use ![caption](url)
+- Sections: Title, Executive Summary, Financial Highlights, Key Wins, Progress, Team, Challenges, Outlook
+- Return ONLY Markdown, no code fences, no explanation""",
             },
             {
                 "role": "user",
-                "content": f"Generate the investor newsletter from this data:\n\n{json.dumps(extracted_data, indent=2)}{media_section}",
+                "content": f"Data:\n{compact_data}{media_section}",
             },
         ],
     )
