@@ -89,3 +89,13 @@ export const exportPDF = async (htmlContent, filename) => {
   link.click();
   link.remove();
 };
+
+// Publish directly to Hashnode
+export const publishToHashnode = async (title, markdown, tags = []) => {
+  const { data } = await api.post("/publish-hashnode", {
+    title,
+    markdown,
+    tags,
+  });
+  return data;
+};
